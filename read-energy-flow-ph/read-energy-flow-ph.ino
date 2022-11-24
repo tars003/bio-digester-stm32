@@ -1,9 +1,13 @@
+#include <SoftwareSerial.h>
+
 #include <ModbusMaster.h>
 #include <LiquidCrystal_I2C.h>
 #include <Wire.h>
 
 HardwareSerial GSM_Serial(PA12, PA11);
 HardwareSerial Serial1(PA10, PA9);
+SoftwareSerial Serial_Uno(10, 11);
+
 #define Serial_Mon Serial
 
 LiquidCrystal_I2C lcd(0x27, 20, 4);
@@ -12,11 +16,13 @@ ModbusMaster node2;
 
 #define LED1 D7
 
+#define maxSerialLen 35
+
 /* MODBUS 1 - ENEGY METER  */
-#define MAX485_DE 4
+#define MAX485_DE 3
 #define MAX485_RE_NEG 5 
 #define pingDelay 500              // PING DELAY FOR MODBUS AFTER EACH REQUEST
-#define requestInterval 15000      // DATA UPDATE TIME ON THE SERVER
+#define requestInterval 120000000      // DATA UPDATE TIME ON THE SERVER
 #define analogPingDelay 50         // DELAY BETWEEN ANALOG PINGS   
 #define lcdMenuInterval 5000       // INTERCAL FOR MENU ROTATION
 #define lcdMenuScreens 3           // TOTAL LCD SCREENS
@@ -81,6 +87,9 @@ float voltage, energy, flowRate, flowVolume;
 unsigned long menuTimer = 0;
 int lcdMenuScreen = 0;
 
+bool newData = false;
+String mainString = "";
+
 void setup() {
   delay(2000);
   Init_Modbus1();
@@ -90,9 +99,10 @@ void setup() {
   Serial_Mon.begin(9600);
   Serial1.begin(9600);
   GSM_Serial.begin(9600);
+  Serial_Uno.begin(9600);
 
   // INIT GPRS
-  gsm_config_gprs();
+//  gsm_config_gprs();
 
   timer = millis();
   menuTimer = millis();
@@ -103,8 +113,10 @@ void loop() {
   voltage = get_voltage();
   energy = get_energy();
   flowRate = get_flow_rate();
-  get_all_ph();
-  get_all_temp();
+//  get_all_ph();
+//  get_all_temp();
+
+  recvData();
 
   
 
@@ -123,8 +135,12 @@ void loop() {
   if(millis() - menuTimer > lcdMenuInterval) {
     lcdMenuScreen += 1;
     if(lcdMenuScreen >= lcdMenuScreens) lcdMenuScreen = 0;
+
+    menuTimer = millis();
   }
-  draw_menu();
+  
+  draw_menu(lcdMenuScreen);
+//  draw_ph(ph1, ph2, ph3, ph4, ph5);
     
   delay(500);
 }
@@ -371,20 +387,20 @@ void draw_ph(float ph1, float ph2, float ph3, float ph4, float ph5) {
 void draw_temp(float temp1, float temp2, float temp3, float temp4, float temp5, float temp6) {
   lcd.clear();
   
-  lcd.setCursor(0, 0); lcd.print("temp1: "); lcd.print(temp1);
-  lcd.setCursor(0, 1); lcd.print("temp2: "); lcd.print(temp2);
-  lcd.setCursor(0, 2); lcd.print("temp3: "); lcd.print(temp3);
-  lcd.setCursor(0, 3); lcd.print("temp4: "); lcd.print(temp4);
-  lcd.setCursor(13, 0); lcd.print("temp5: "); lcd.setCursor(13, 1);  lcd.print(temp5);
-  lcd.setCursor(13, 2); lcd.print("temp6: "); lcd.setCursor(13, 3);  lcd.print(temp6);
+  lcd.setCursor(0, 0); lcd.print("T1: "); lcd.print(temp1);
+  lcd.setCursor(0, 1); lcd.print("T2: "); lcd.print(temp2);
+  lcd.setCursor(0, 2); lcd.print("T3: "); lcd.print(temp3);
+  lcd.setCursor(0, 3); lcd.print("T4: "); lcd.print(temp4);
+  lcd.setCursor(13, 0); lcd.print("T5: "); lcd.setCursor(12, 1);  lcd.print(temp5);
+  lcd.setCursor(13, 2); lcd.print("T6: "); lcd.setCursor(12, 3);  lcd.print(temp6);
 }
 void draw_modbus_data(float energy, float flowRate, float flowVolume, int rh) {
   lcd.clear();
   
   lcd.setCursor(0, 0); lcd.print("Energy(kwh): "); lcd.print(energy);
-  lcd.setCursor(0, 1); lcd.print("LPM: "); lcd.print(flowRate);
-  lcd.setCursor(0, 2); lcd.print("Acc. Vol: "); lcd.print(flowVolume);
-  lcd.setCursor(0, 3); lcd.print("RH %: "); lcd.print(rh);
+  lcd.setCursor(0, 1); lcd.print("LPM:         "); lcd.print(flowRate);
+  lcd.setCursor(0, 2); lcd.print("Acc. Vol:    "); lcd.print(flowVolume);
+  lcd.setCursor(0, 3); lcd.print("RH % :       "); lcd.print(rh);
 }
 void draw_demo_screen(void) {
   // LCD PRINTS
@@ -449,7 +465,7 @@ void get_all_ph(void) {
   ph4 = getPh(phPin1);
   delay(analogPingDelay);
   ph5 = getPh(phPin1);
-
+  
   return;
 }
 void get_all_temp(void) {
@@ -498,7 +514,7 @@ float getPh(int analogPin) {     // GET SINGLE PH
   
   return ph_act;
 }
-float getTemp(int val){ // SINGLE GET  SINGLE TEMPRATURE
+  float getTemp(int val){ // SINGLE GET  SINGLE TEMPRATURE
   float voltageDividerR1 = 250;         // Resistor value in R1 for voltage devider method 
   float BValue = 4000;                    // The B Value of the thermistor for the temperature measuring range
   float R1 = 5000;                        // Thermistor resistor rating at based temperature (25 degree celcius)
@@ -665,3 +681,45 @@ void ledSignal(int count) {
   }
 }
 /* GSM FUNCTIONS */
+
+void recvData() {
+  static boolean recvInProgress = false;
+  static int ndx = 0;
+  char startMarker = '<';
+  char endMarker = '>';
+  char rc;
+
+  Serial_Mon.println("Inside recvData");
+
+  while(Serial_Uno.available() > 0 && newData == false) {
+    rc = Serial_Uno.read();
+    if(recvInProgress == true) {
+      if (rc != endMarker) {
+        mainString += rc;
+      }
+      else {
+        mainString += rc;
+        recvInProgress = false;
+        ndx = 0;      
+        newData = true;
+      }
+    }
+    else if(rc == startMarker) {
+      recvInProgress = true;
+      mainString = "";                   // REALLY IMPORTANT
+      mainString += rc;
+    }
+  }
+  
+  parseNewData();    
+}
+
+void parseNewData() {
+    if (newData == true) {
+
+        if(mainString.length() > maxSerialLen) mainString = "";
+        else Serial_Mon.println(mainString);
+        newData = false;
+        
+    }
+}

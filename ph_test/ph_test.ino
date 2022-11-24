@@ -27,17 +27,13 @@ void setup()
   lcd.clear();
 }
 void loop() {
-  for(int i=0;i<10;i++) 
-  { 
-    buffer_arr[i]=analogRead(A0);
+  for(int i=0;i<10;i++) { 
+    buffer_arr[i]=analogRead(0);
     delay(30);
   }
-  for(int i=0;i<9;i++)
-  {
-    for(int j=i+1;j<10;j++)
-    {
-      if(buffer_arr[i]>buffer_arr[j])
-      {
+  for(int i=0;i<9;i++){
+    for(int j=i+1;j<10;j++){
+      if(buffer_arr[i]>buffer_arr[j]){
         temp=buffer_arr[i];
         buffer_arr[i]=buffer_arr[j];
         buffer_arr[j]=temp;
@@ -48,7 +44,6 @@ void loop() {
   avgval=0;
   for(int i=2;i<8;i++)
     avgval+=buffer_arr[i];
-
   avgval = avgval/6;
   
   float volt=(float)avgval*5/4096;
@@ -60,7 +55,9 @@ void loop() {
   lcd.print(ph_act);
 
   Serial.print("pH -> ");
-  Serial.println(ph_act);
+  Serial.print(ph_act);
+  Serial.print(" analog val -> ");
+  Serial.println(avgval);
 
   delay(1000);
 }
