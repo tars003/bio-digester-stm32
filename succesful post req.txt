@@ -1,0 +1,36 @@
+res: 0 | Flow Volume  = 63.28
+Inside recvData
+
+ Corrrupt data!!!
+<09.31,00.54,09.11,08.95,10.6<09.34,00.54,09.17,08.95,10.56,>
+
+Processed data : {"mcId":"1","date":"5-11-22","time":"13:00:00","temp1":"22.46","temp2":"22.71","temp3":"19.34","temp4":"17.03","temp5":"17.92","temp6":"21.46","ph1":"09.34","ph2":"00.57","ph3":"09.08","ph4":"08.89","ph5":"10.73","rh":"0.00","energy":"242.11","flow":"0.00","flowVolume":"63.28"}
+ --- Start GPRS & HTTP --- 
+Send ->: AT+HTTPPARA=CONTENT,application/json len: 36
+AT+HTTPPARA=CONTENT,application/jsonOK
+
+Send ->: AT+HTTPDATA=1200,5000 len: 21
+AT+HTTPDATA=1200,5000DOWNLOAD
+
+Send ->: {"mcId":"1","date":"5-11-22","time":"13:00:00","temp1":"22.46","temp2":"22.71","temp3":"19.34","temp4":"17.03","temp5":"17.92","temp6":"21.46","ph1":"09.34","ph2":"00.57","ph3":"09.08","ph4":"08.89","ph5":"10.73","rh":"0.00","energy":"242.11","flow":"0.00","flowVolume":"63.28"} len: 278
+
+OK
+
+Send ->: AT+HTTPACTION=1 len: 15
+AT+HTTPACTION=1OK
+
++HTTPACTION: 1,200,391
+
+/***************************************
+response code stored in string : AT+HTTPACTION=1OK
+
++HTTPACTION: 1,200,391
+
+***************************************/
+
+POST request successfull !
+
+Send ->: AT+HTTPREAD len: 11
+AT+HTTPREAD+HTTPREAD: 391
+{"success":true,"data":{"mcId":"1","time":"13:00:00","serverTime":"23:09:22","serverDate":"25-11-22","date":"5-11-22","temp1":"22.46","temp2":"22.71","temp3":"19.34","temp4":"17.03","temp5":"17.92","temp6":"21.46","ph1":"09.34","ph2":"00.57","ph3":"09.08","ph4":"08.89","ph5":"10.73","rh":"0.00","energy":"242.11","flow":"0.00","flowVolume":"63.28","_id":"6380fdca214e34d4752360bd","__v":0}}
+OK

@@ -6,7 +6,7 @@
 #define phPin4 A3
 #define phPin5 A5
 
-#define loopInterval 750
+#define loopInterval 1250
 #define resetInterval 600000
 
 float calibration_value = 28.4;

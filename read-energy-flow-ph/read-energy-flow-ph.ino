@@ -1,6 +1,6 @@
+#include <IWatchdog.h>
 #include <DHT.h>
 #include <SoftwareSerial.h>
-
 #include <ModbusMaster.h>
 #include <LiquidCrystal_I2C.h>
 #include <Wire.h>
@@ -38,11 +38,14 @@ DHT dht(DHTPIN, DHTTYPE);
 #define pingDelay 500              // PING DELAY FOR MODBUS AFTER EACH REQUEST
 #define analogPingDelay 50         // DELAY BETWEEN ANALOG PINGS   
 #define lcdMenuScreens 3           // TOTAL LCD SCREENS
+#define maxPostTries 3             // MAX POST REQ TRIES
+#define minModbusPingDelay  50     // DELAY BETWEEN SUBSEQUENT MODBUS PINGS IN ms
 
 #define requestInterval 60000   // DATA UPDATE TIME ON THE SERVER
 #define lcdMenuInterval 5000       // INTERCAL FOR MENU ROTATION
 #define serialReadInterval 1000   // READ INTERVAL FROM UNO
 #define loopDelay 250            // MAIN LOOP DELAY
+#define watchDogInterval 15000000
 
 
 bool debugLogs = false;
@@ -109,6 +112,8 @@ bool newData = false;
 String mainString = "";
 String phString = "";
 
+int reqFailCount = 0;
+
 void setup() {
   delay(1000);
   Init_Modbus1();
@@ -124,23 +129,33 @@ void setup() {
 
   lcd.clear();
   lcd.setCursor(0, 0); lcd.print("Configuring GPRS..."); 
-//   INIT GPRS
+  // INIT GPRS
   gsm_config_gprs();
 
   timer = millis();
   menuTimer = timer;
   serialReadTimer = menuTimer;
+
+  IWatchdog.begin(watchDogInterval);
 }
 
 void loop() {
-
-  voltage = get_voltage();
-  energy = get_energy();
-  flowRate = get_flow_rate();
-  delay(50);
-  flowVolume = get_flow_volume();
-  get_all_temp();
+  Serial.println("\n\nLoop start --------------------------------");
+  unsigned long tt = millis();
   
+  // IF POST REQ FAILED 3 TIMES, DONT RESET WATCHDOG TIMER
+  if(reqFailCount >= maxPostTries) {
+    Serial.print("\nPOST request fail count : ");
+    Serial.println(reqFailCount);
+    Serial.println();
+    while(1){
+      delay(1000);
+      Serial.println("Waiting for restart");
+    }
+  }
+
+  updateModbusData();
+  get_all_temp();
 //  get_all_ph();
 //  get_humidity();
 
@@ -152,11 +167,10 @@ void loop() {
 
   // MAKING A POST REQUEST TO THE SERVER
   if(millis() - timer > requestInterval ) {
-    String processedData = formatString(deviceId, "5-11-22", "13:00:00", temp1, temp2, temp3, temp4, temp5, temp6, ph1Str, ph2Str, ph3Str, ph4Str, ph5Str, rh, voltage, flowRate, flowRate);
+    String processedData = formatString(deviceId, "5-11-22", "13:00:00", temp1, temp2, temp3, temp4, temp5, temp6, ph1Str, ph2Str, ph3Str, ph4Str, ph5Str, rh, voltage, flowRate, flowVolume);
     Serial_Mon.print("Processed data : ");
     Serial_Mon.println(processedData);
     gsm_http_post(processedData);
-
     timer = millis();
   }
 
@@ -170,8 +184,14 @@ void loop() {
 
   // DRAW MENU ON LCD EVERY LOOP
   draw_menu(lcdMenuScreen);
-    
+  // MIN LOOP DELAY
   delay(loopDelay);
+  // RELOAD WATCHDOG TIMER
+  IWatchdog.reload();
+  // LOOP TIME MEASUREMENT
+  Serial.print("Loop end ------------------------------- time in millis : ");
+  Serial.println(millis() - tt);
+  Serial.println();
 }
 
 /* INITIALIZATION FUNCTIONS  */
@@ -485,6 +505,24 @@ void draw_demo_screen(void) {
 
 
 /* MODBUS FUNCTIONS */
+void updateModbusData(void) {
+  prevVoltage = voltage;
+  prevEnergy = energy;
+  prevFlowRate = flowRate;
+  prevVolume = flowVolume;
+
+  voltage = get_voltage();
+  energy = get_energy();
+  flowRate = get_flow_rate();
+  flowVolume = get_flow_volume();
+
+  if(voltage == -1) voltage = prevVoltage;
+  if(energy == -1) energy = prevEnergy;
+  if(flowRate == -1) flowRate = prevFlowRate;
+  if(flowVolume == -1) flowVolume = prevVolume;
+
+  return;
+}
 float get_voltage(void) {
   int res;
   float vrPhase;
@@ -524,6 +562,8 @@ float get_flow_rate(void) {
   Serial_Mon.print(res, HEX);
   Serial_Mon.print(" | Flow Rate  = "); 
   Serial_Mon.println(flowRate);
+
+  delay(minModbusPingDelay);
   
   return flowRate;
 }
@@ -537,6 +577,8 @@ float get_flow_volume(void) {
   Serial_Mon.print(res, HEX);
   Serial_Mon.print(" | Flow Volume  = "); 
   Serial_Mon.println(flowVolume);
+
+  delay(minModbusPingDelay);
 
   if(isnan(flowVolume)) return -1;
   
@@ -647,6 +689,7 @@ void gsm_http_post( String postdata) {
   // gsm_send_serial("AT+HTTPPARA=CID,1");
   // gsm_send_serial("AT+HTTPPARA=URL," + url);
   gsm_send_serial("AT+HTTPPARA=CONTENT,application/json");
+  
   gsm_send_serial("AT+HTTPDATA=1200,5000");
   gsm_send_serial(postdata);
   gsm_send_serial("AT+HTTPACTION=1");
@@ -689,13 +732,20 @@ void gsm_config_gprs() {
     delay(GPRS_INIT_DELAY);
     gsm_send_serial("AT+SAPBR=1,1");
     delay(GPRS_INIT_DELAY);   
+
+    Serial.print("bearer respone -> ");
+    Serial.println(bearerResponse);
     
     // BEARER NOT OK
-    if(bearerResponse.indexOf("OK") != -1 || bearerResponse.length()<2) {
-      bearerFlag = 0;
-      Serial_Mon.print("Bearer Connection failed, resetting");
+    if(bearerResponse.indexOf("OK") == -1 || bearerResponse.length()<2) {
+      bearerFlag = 1;
+      Serial_Mon.println("Bearer Connection Failed !");
       ledSignal(5);
-//      ESP.restart();
+    }
+    // BEARER OK
+    else if(bearerResponse.indexOf("OK") != -1) {
+      bearerFlag = 0;
+      Serial_Mon.println("Bearer Connection Sucessful !");
     }
   }    
 
@@ -713,6 +763,8 @@ void gsm_config_gprs() {
 // SEND AT COMMANDS GSM
 // HANDLES DIFFERENT WAITING TIMES FOR VARIOUS AT COMMANDS
 void gsm_send_serial(String command) {
+  IWatchdog.reload();
+  
   Serial_Mon.println("Send ->: " + command + " len: " + command.length());
   GSM_Serial.println(command);
   long wtimer = millis();
@@ -743,6 +795,10 @@ void gsm_send_serial(String command) {
       // UPDATE BEARER REPONSE IN STRING
       else if(command == "AT+SAPBR=1,1") bearerResponse += String((char)incomingB);
     }
+    // IF BEARER CONNECTON SUCCESSFUL BEFORE 0 SECS, BREAK
+    if(command == "AT+SAPBR=1,1") {
+      if(bearerResponse.indexOf("OK") != -1 && bearerResponse.length()>2) break;
+    }
   }  
   Serial_Mon.println();
 
@@ -755,9 +811,16 @@ void gsm_send_serial(String command) {
     if(httpRes.indexOf("200") > 0) {
 //      esp_task_wdt_reset();
       isReqSuccess = true;
+      reqFailCount = 0;
+    
+      Serial.println("\nPOST request successfull !\n");
     }
     else  {
       isReqSuccess = false;
+      reqFailCount += 1;
+      Serial.print("\nPOST request failed ! Fail count : ");
+      Serial.println(reqFailCount);
+      Serial.println();
     }
   }
 }
@@ -786,7 +849,7 @@ void recvData() {
   char endMarker = '>';
   char rc;
 
-  Serial_Mon.println("Inside recvData");
+//  Serial_Mon.println("Inside recvData");
 
   while(Serial_Uno.available() > 0 && newData == false) {
     rc = Serial_Uno.read();
@@ -814,13 +877,13 @@ void recvData() {
 void parseNewData() {
     if (newData == true) {
         if(mainString.length()>maxSerialLen || mainString.length()<minSerialLen) {
-          Serial_Mon.println("\n Corrrupt data!!!");
+          Serial_Mon.print("\n Corrrupt data!!! -> ");
           Serial_Mon.println(mainString);
-          Serial.println();
           mainString = "";
         }
         else {
           phString = mainString;
+          Serial.print("recvd serial data : ");
           Serial_Mon.println(phString);
           
           ph1Str = phString.substring(1,6);
