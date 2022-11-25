@@ -1,10 +1,13 @@
+#include<avr/wdt.h>
+
 #define phPin1 A0
 #define phPin2 A1
 #define phPin3 A2
 #define phPin4 A3
 #define phPin5 A5
 
-#define loopInterval 1000
+#define loopInterval 750
+#define resetInterval 600000
 
 float calibration_value = 28.4;
 int phval = 0; 
@@ -14,6 +17,7 @@ int buffer_arr[10],temp;
 float ph1, ph2, ph3, ph4, ph5;
 char ph1String[5], ph2String[5], ph3String[5], ph4String[5], ph5String[5];
 unsigned long loopTimer = 0;
+unsigned long resetTimer = 0;
 
 
 void setup() {
@@ -21,10 +25,13 @@ void setup() {
   delay(2000);
   Serial.println("Inside setup !!");
 
-  delay(2000);
+  wdt_disable();  
+  delay(3000); 
 
   loopTimer = millis();
+  resetTimer = millis();
 
+  wdt_enable(WDTO_4S);  
 }
 
 void loop() {
@@ -34,31 +41,37 @@ void loop() {
   ph4 = getPh(phPin4);
   ph5 = getPh(phPin5);
 
-  ph1 = formatPh(ph1);
-  ph2 = formatPh(ph2);
-  ph3 = formatPh(ph3);
-  ph4 = formatPh(ph4);
-  ph5 = formatPh(ph5);
+  // ph1 = formatPh(ph1);
+  // ph2 = formatPh(ph2);
+  // ph3 = formatPh(ph3);
+  // ph4 = formatPh(ph4);
+  // ph5 = formatPh(ph5);
 
   if(millis() - loopTimer > loopInterval) {
     Serial.print("<");
 
-    if(ph1 < 9.9) Serial.print("0"); 
+    if(ph1 <= 9.99) Serial.print("0"); 
     Serial.print(ph1); Serial.print(",");
-    if(ph2 < 9.9) Serial.print("0"); 
+    if(ph2 <= 9.99) Serial.print("0"); 
     Serial.print(ph2); Serial.print(",");
-    if(ph3 < 9.9) Serial.print("0"); 
+    if(ph3 <= 9.99) Serial.print("0"); 
     Serial.print(ph3); Serial.print(",");
-    if(ph4 < 9.9) Serial.print("0"); 
+    if(ph4 <= 9.99) Serial.print("0"); 
     Serial.print(ph4); Serial.print(",");
-    if(ph5 < 9.9) Serial.print("0"); 
+    if(ph5 <= 9.99) Serial.print("0"); 
     Serial.print(ph5); Serial.print(",");
     
     Serial.print(">");
     Serial.println();
     
     loopTimer = millis();
+
+    wdt_reset();
   }
+  if(millis() - resetTimer > resetInterval) {
+    while(1);        
+  }    
+  
 
 }
 
@@ -102,3 +115,6 @@ float formatPh(float ph) {
 
   return ph;
 }
+
+// <11.20,11.10,11.10,11.20,13.00,>
+

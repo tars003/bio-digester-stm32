@@ -4,8 +4,8 @@
 HardwareSerial Serial1(PA10, PA9);
 
 
-#define MAX485_DE 4
-#define MAX485_RE_NEG 5
+#define MAX485_DE 3
+#define MAX485_RE_NEG 4
 
 ModbusMaster node;
 
@@ -47,7 +47,7 @@ void loop() {
 //  Serial.println(result, HEX);
 
 //  result = node.readHoldingRegisters(0,2);
-  result = node.readHoldingRegisters(0,1);
+  result = node.readHoldingRegisters(3,2);
   Serial.print("Response received : ");
   Serial.println(result, HEX);
 
@@ -66,8 +66,17 @@ void loop() {
 //      }
 //      u.j=((unsigned long)data[1]<<16 |data[0]);
 //      int vall = (int16_t)(data[1] << 8 | data[0]);
+
+      uint32_t a = ((unsigned long)node.getResponseBuffer(1) << 16 | node.getResponseBuffer(0));
       Serial.print("freq -> ");
-      Serial.println(node.getResponseBuffer(0));
+      Serial.print(node.getResponseBuffer(1));
+      Serial.print(" : ");
+      Serial.print(node.getResponseBuffer(0));
+      Serial.print(" a = ");
+      String b = String(a, HEX);
+      int d = atoi(&b[0]);
+      float c = (float)d / 1000;
+      Serial.println(c, 3);
   }
   else if(result == node.ku8MBIllegalDataAddress) {
     Serial.println("Illegal Data address !");  

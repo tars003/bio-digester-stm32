@@ -1,34 +1,49 @@
+#include <DHT.h>
 #include <SoftwareSerial.h>
 
 #include <ModbusMaster.h>
 #include <LiquidCrystal_I2C.h>
 #include <Wire.h>
 
+
 HardwareSerial GSM_Serial(PA12, PA11);
 HardwareSerial Serial1(PA10, PA9);
 SoftwareSerial Serial_Uno(10, 11);
-
 #define Serial_Mon Serial
 
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 ModbusMaster node;
 ModbusMaster node2;
 
-#define LED1 D7
-
-#define maxSerialLen 35
-
-/* MODBUS 1 - ENEGY METER  */
-#define MAX485_DE 3
-#define MAX485_RE_NEG 5 
-#define pingDelay 500              // PING DELAY FOR MODBUS AFTER EACH REQUEST
-#define requestInterval 120000000      // DATA UPDATE TIME ON THE SERVER
-#define analogPingDelay 50         // DELAY BETWEEN ANALOG PINGS   
-#define lcdMenuInterval 5000       // INTERCAL FOR MENU ROTATION
-#define lcdMenuScreens 3           // TOTAL LCD SCREENS
+#define DHTTYPE DHT11
+#define DHTPIN D7
+DHT dht(DHTPIN, DHTTYPE);
 
 #define phPin1 0
-#define tempPin1 1
+#define tempPin1 A0
+#define tempPin2 A1
+#define tempPin3 A2
+#define tempPin4 A3
+#define tempPin5 A4
+
+#define LED1 D7
+#define maxSerialLen 33
+#define minSerialLen 27
+#define deviceId 1
+
+ 
+/* MODBUS 1 - ENEGY METER  */
+#define MAX485_DE 3
+#define MAX485_RE_NEG 4 
+#define pingDelay 500              // PING DELAY FOR MODBUS AFTER EACH REQUEST
+#define analogPingDelay 50         // DELAY BETWEEN ANALOG PINGS   
+#define lcdMenuScreens 3           // TOTAL LCD SCREENS
+
+#define requestInterval 60000   // DATA UPDATE TIME ON THE SERVER
+#define lcdMenuInterval 5000       // INTERCAL FOR MENU ROTATION
+#define serialReadInterval 1000   // READ INTERVAL FROM UNO
+#define loopDelay 250            // MAIN LOOP DELAY
+
 
 bool debugLogs = false;
 
@@ -79,33 +94,42 @@ String bearerResponse = "";
 /* GLOBAL VARS */
 
 float ph1, ph2, ph3, ph4, ph5;
+String ph1Str, ph2Str, ph3Str, ph4Str, ph5Str;
 float temp1, temp2, temp3, temp4, temp5, temp6;
-int rh;
+float rh;
 float voltage, energy, flowRate, flowVolume;
+float prevVoltage, prevEnergy, prevFlowRate, prevVolume;
 /* GLOBAL VARS */
 
 unsigned long menuTimer = 0;
+unsigned long serialReadTimer = 0;
 int lcdMenuScreen = 0;
 
 bool newData = false;
 String mainString = "";
+String phString = "";
 
 void setup() {
-  delay(2000);
+  delay(1000);
   Init_Modbus1();
   LCD_Init();
   GPIO_Init();
-
+  dht.begin(); 
+  
   Serial_Mon.begin(9600);
   Serial1.begin(9600);
   GSM_Serial.begin(9600);
   Serial_Uno.begin(9600);
 
-  // INIT GPRS
-//  gsm_config_gprs();
+
+  lcd.clear();
+  lcd.setCursor(0, 0); lcd.print("Configuring GPRS..."); 
+//   INIT GPRS
+  gsm_config_gprs();
 
   timer = millis();
-  menuTimer = millis();
+  menuTimer = timer;
+  serialReadTimer = menuTimer;
 }
 
 void loop() {
@@ -113,36 +137,41 @@ void loop() {
   voltage = get_voltage();
   energy = get_energy();
   flowRate = get_flow_rate();
-//  get_all_ph();
-//  get_all_temp();
-
-  recvData();
-
+  delay(50);
+  flowVolume = get_flow_volume();
+  get_all_temp();
   
+//  get_all_ph();
+//  get_humidity();
+
+  // FROM UNO
+  if(millis() - serialReadTimer > serialReadInterval) {
+    recvData();
+    serialReadTimer = 0;
+  }
 
   // MAKING A POST REQUEST TO THE SERVER
   if(millis() - timer > requestInterval ) {
-    String processedData = formatString(1, "5-11-22", "13:00:00", temp1, temp2, temp3, temp4, temp5, ph1, ph2, ph3, ph4, ph5, 55, energy, flowRate, flowRate);
-  
+    String processedData = formatString(deviceId, "5-11-22", "13:00:00", temp1, temp2, temp3, temp4, temp5, temp6, ph1Str, ph2Str, ph3Str, ph4Str, ph5Str, rh, voltage, flowRate, flowRate);
     Serial_Mon.print("Processed data : ");
     Serial_Mon.println(processedData);
-    
     gsm_http_post(processedData);
 
     timer = millis();
   }
 
+  // LCD MENU SCREEN UPDATE
   if(millis() - menuTimer > lcdMenuInterval) {
     lcdMenuScreen += 1;
     if(lcdMenuScreen >= lcdMenuScreens) lcdMenuScreen = 0;
 
     menuTimer = millis();
   }
-  
+
+  // DRAW MENU ON LCD EVERY LOOP
   draw_menu(lcdMenuScreen);
-//  draw_ph(ph1, ph2, ph3, ph4, ph5);
     
-  delay(500);
+  delay(loopDelay);
 }
 
 /* INITIALIZATION FUNCTIONS  */
@@ -178,7 +207,7 @@ void LCD_Init(void) {              // INITIALIZE 20X4 LCD
   lcd.setBacklight(HIGH);
 }
 // FORMAT DATA TO BE SENT TO SERVER
-String formatString(int mcId, String dateString, String timeString, float temp1, float temp2, float temp3, float temp4, float temp5, float ph1, float ph2, float ph3, float ph4, float ph5, float rh, float energy, float flow, float flowVolume) {
+String formatString(int mcId, String dateString, String timeString, float temp1, float temp2, float temp3, float temp4, float temp5, float temp6, String ph1, String ph2, String ph3, String ph4, String ph5, float rh, float energy, float flow, float flowVolume) {
     String processedData = "{";
     
     processedData += "\"mcId\":\"";
@@ -211,6 +240,10 @@ String formatString(int mcId, String dateString, String timeString, float temp1,
 
     processedData += "\"temp5\":\"";        
     processedData += temp5;
+    processedData += "\",";
+
+    processedData += "\"temp6\":\"";        
+    processedData += temp6;
     processedData += "\",";
 
     processedData += "\"ph1\":\"";        
@@ -254,7 +287,7 @@ String formatString(int mcId, String dateString, String timeString, float temp1,
 /* INITIALIZATION FUNCTIONS  */
 
 /* MODBUS FUNCTIONS  */
-float getParameter(float *ans, int address, int len) {  // GET PARAMETER FROM ENERGY METER
+int getParameter(float *ans, int address, int len) {  // GET PARAMETER FROM ENERGY METER
   // CONVERT RESPONSE BUFFER TO FLOAT
   uint8_t i, result;
   uint16_t data[2];
@@ -303,7 +336,7 @@ float getParameter(float *ans, int address, int len) {  // GET PARAMETER FROM EN
   }
   return result;
 }
-float getParameter2(float *ans, int address, int len) { // GET PARAMETER FROM FLOW METER
+int getParameter2( float *ans, int address, int len) { // GET PARAMETER FROM FLOW METER
 
   int result;
   
@@ -317,13 +350,51 @@ float getParameter2(float *ans, int address, int len) { // GET PARAMETER FROM FL
 
   
   if (result == node2.ku8MBSuccess) { 
-      int flowRate = node2.getResponseBuffer(0);
+      float flowRate = node2.getResponseBuffer(0);
       *ans = flowRate/10;
       
       if(false) {
         Serial_Mon.print("flow Rate  ans -> ");
         Serial_Mon.println(flowRate);
       }
+  }
+  else if(result == node2.ku8MBIllegalDataAddress) {
+    if(debugLogs) {
+        Serial_Mon.println("Illegal Data address !");  
+    }
+  }
+  else if(result == node2.ku8MBIllegalDataValue) {
+    if(debugLogs) {
+      Serial_Mon.println("Illegal data value !");  
+    }
+  }
+  else if(result == node2.ku8MBResponseTimedOut) {
+    if(debugLogs) {
+      Serial_Mon.println("Response timeout !");  
+    }
+  }
+  return result;
+}
+int getParameter3( float *ans, int address, int len) { // GET PARAMETER FROM FLOW METER
+  int result;
+
+  // MAKING REQUEST TO SLAVE
+  result = node2.readHoldingRegisters( 3, 2);
+  if(false) {
+    Serial_Mon.print("Response received : ");
+    Serial_Mon.println(result, HEX);
+  }
+  // REQUEST TO SLAVE DONE
+
+  
+  if (result == node2.ku8MBSuccess) { 
+      uint32_t a = ((unsigned long)node2.getResponseBuffer(1) << 16 | node2.getResponseBuffer(0));
+      String b = String(a, HEX);
+      int c = atoi(&b[0]);
+      float d = (float)c / 1000;
+      
+//      Serial.println(d, 3);
+      *ans = d;
   }
   else if(result == node2.ku8MBIllegalDataAddress) {
     if(debugLogs) {
@@ -378,11 +449,11 @@ void draw_error(void) {
 void draw_ph(float ph1, float ph2, float ph3, float ph4, float ph5) {
   lcd.clear();
   
-  lcd.setCursor(0, 0); lcd.print("pH1: "); lcd.print(ph1);
-  lcd.setCursor(0, 1); lcd.print("pH2: "); lcd.print(ph2);
-  lcd.setCursor(0, 2); lcd.print("pH3: "); lcd.print(ph3);
-  lcd.setCursor(0, 3); lcd.print("pH4: "); lcd.print(ph4);
-  lcd.setCursor(13, 0); lcd.print("pH5: "); lcd.setCursor(13, 1);  lcd.print(ph5);
+  lcd.setCursor(0, 0); lcd.print("pH1: "); lcd.print(ph1Str);
+  lcd.setCursor(0, 1); lcd.print("pH2: "); lcd.print(ph2Str);
+  lcd.setCursor(0, 2); lcd.print("pH3: "); lcd.print(ph3Str);
+  lcd.setCursor(0, 3); lcd.print("pH4: "); lcd.print(ph4Str);
+  lcd.setCursor(13, 0); lcd.print("pH5: "); lcd.setCursor(13, 1);  lcd.print(ph5Str);
 }
 void draw_temp(float temp1, float temp2, float temp3, float temp4, float temp5, float temp6) {
   lcd.clear();
@@ -397,9 +468,9 @@ void draw_temp(float temp1, float temp2, float temp3, float temp4, float temp5, 
 void draw_modbus_data(float energy, float flowRate, float flowVolume, int rh) {
   lcd.clear();
   
-  lcd.setCursor(0, 0); lcd.print("Energy(kwh): "); lcd.print(energy);
+  lcd.setCursor(0, 0); lcd.print("Energy(kwh): "); lcd.print(voltage);
   lcd.setCursor(0, 1); lcd.print("LPM:         "); lcd.print(flowRate);
-  lcd.setCursor(0, 2); lcd.print("Acc. Vol:    "); lcd.print(flowVolume);
+  lcd.setCursor(0, 2); lcd.print("Vol: "); lcd.print(String(flowVolume, 3));
   lcd.setCursor(0, 3); lcd.print("RH % :       "); lcd.print(rh);
 }
 void draw_demo_screen(void) {
@@ -424,6 +495,8 @@ float get_voltage(void) {
   Serial_Mon.println(vrPhase);
   delay(pingDelay);
 
+  if(isnan(vrPhase)) return -1;
+
   return vrPhase;
 }
 float get_energy(void) {
@@ -436,25 +509,54 @@ float get_energy(void) {
   Serial_Mon.println(kwh);
   delay(pingDelay);
 
+  if(isnan(kwh)) return -1;
+
   return kwh;
 }
 float get_flow_rate(void) {
   int res;
   float flowRate;
   res = getParameter2(&flowRate, 0, 1);  // GETTING FLOW RATE FROM FLOW METER ADDRESS 0
+  
+  if(isnan(flowRate)) return -1;
 
+  Serial_Mon.print("res: "); 
+  Serial_Mon.print(res, HEX);
+  Serial_Mon.print(" | Flow Rate  = "); 
+  Serial_Mon.println(flowRate);
+  
   return flowRate;
 }
 float get_flow_volume(void) {
   int res;
-  float flowVolume;
-  res = getParameter2(&flowVolume, 0, 1);  // GETTING FLOW RATE FROM FLOW METER ADDRESS 0
+  float flowVolume ;
+  
+  res = getParameter3(&flowVolume, 3, 2);  // GETTING FLOW RATE LSB FROM FLOW METER ADDRESS 4
+  
+  Serial_Mon.print("res: "); 
+  Serial_Mon.print(res, HEX);
+  Serial_Mon.print(" | Flow Volume  = "); 
+  Serial_Mon.println(flowVolume);
 
+  if(isnan(flowVolume)) return -1;
+  
   return flowVolume;
 }
 /* MODBUS FUNCTIONS */
 
 /* TEMP / PH FUNCTIONS */
+void get_humidity(void) {
+  temp6 = dht.readTemperature();
+  rh = dht.readHumidity();
+
+  if (isnan(rh) || isnan(temp6)) {
+    Serial.println(F("Failed to read from DHT sensor!"));
+    temp6 = 0;
+    rh = 0;
+    return;
+  }
+  return;
+}
 void get_all_ph(void) {
   ph1 = getPh(phPin1);
   delay(analogPingDelay);
@@ -470,17 +572,11 @@ void get_all_ph(void) {
 }
 void get_all_temp(void) {
   temp1 = getTemp(analogRead(tempPin1));  
-  delay(analogPingDelay);
-  temp2 = getTemp(analogRead(tempPin1));  
-  delay(analogPingDelay);
-  temp3 = getTemp(analogRead(tempPin1));  
-  delay(analogPingDelay);
-  temp4 = getTemp(analogRead(tempPin1));  
-  delay(analogPingDelay);
-  temp5 = getTemp(analogRead(tempPin1));  
-  delay(analogPingDelay);
-  temp6 = getTemp(analogRead(tempPin1));
-
+  temp2 = getTemp(analogRead(tempPin2));  
+  temp3 = getTemp(analogRead(tempPin3));  
+  temp4 = getTemp(analogRead(tempPin4));  
+  temp5 = getTemp(analogRead(tempPin5));   
+  temp6 = getTemp(analogRead(tempPin5));
   return;
 }
 float getPh(int analogPin) {     // GET SINGLE PH
@@ -514,10 +610,10 @@ float getPh(int analogPin) {     // GET SINGLE PH
   
   return ph_act;
 }
-  float getTemp(int val){ // SINGLE GET  SINGLE TEMPRATURE
-  float voltageDividerR1 = 250;         // Resistor value in R1 for voltage devider method 
+float getTemp(int val){ // SINGLE GET  SINGLE TEMPRATURE
+  float voltageDividerR1 = 255;         // Resistor value in R1 for voltage devider method 
   float BValue = 4000;                    // The B Value of the thermistor for the temperature measuring range
-  float R1 = 5000;                        // Thermistor resistor rating at based temperature (25 degree celcius)
+  float R1 = 10000;                        // Thermistor resistor rating at based temperature (25 degree celcius)
   float T1 = 298.15f;                      /* Base temperature T1 in Kelvin (default should be at 25 degree)*/
   float R2 ;                              /* Resistance of Thermistor (in ohm) at Measuring Temperature*/
   float T2 ;                              /* Measurement temperature T2 in Kelvin */
@@ -682,6 +778,7 @@ void ledSignal(int count) {
 }
 /* GSM FUNCTIONS */
 
+// SERIAL READ FORM UNO
 void recvData() {
   static boolean recvInProgress = false;
   static int ndx = 0;
@@ -713,13 +810,26 @@ void recvData() {
   
   parseNewData();    
 }
-
+// CHECK DATA RECIVED FROM UNO
 void parseNewData() {
     if (newData == true) {
-
-        if(mainString.length() > maxSerialLen) mainString = "";
-        else Serial_Mon.println(mainString);
+        if(mainString.length()>maxSerialLen || mainString.length()<minSerialLen) {
+          Serial_Mon.println("\n Corrrupt data!!!");
+          Serial_Mon.println(mainString);
+          Serial.println();
+          mainString = "";
+        }
+        else {
+          phString = mainString;
+          Serial_Mon.println(phString);
+          
+          ph1Str = phString.substring(1,6);
+          ph2Str = phString.substring(7,12);
+          ph3Str = phString.substring(13,18);
+          ph4Str = phString.substring(19,24);
+          ph5Str = phString.substring(25,30);
+          
+        }
         newData = false;
-        
     }
 }
