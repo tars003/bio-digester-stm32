@@ -20,13 +20,15 @@ ModbusMaster node2;
 DHT dht(DHTPIN, DHTTYPE);
 
 #define phPin1 0
-#define tempPin1 A0
-#define tempPin2 A1
-#define tempPin3 A2
-#define tempPin4 A3
-#define tempPin5 A4
+#define LED1 D13
+// HAS TO BE IN NUMERICAL FORMAT, CANNOT BE A0,A1,etc, USED FOR CALIBRATION ARR INDEXING
+#define tempPin1 0
+#define tempPin2 1
+#define tempPin3 2
+#define tempPin4 3
+#define tempPin5 4
 
-#define LED1 D7
+
 #define maxSerialLen 33
 #define minSerialLen 27
 #define deviceId 1
@@ -35,17 +37,21 @@ DHT dht(DHTPIN, DHTTYPE);
 /* MODBUS 1 - ENEGY METER  */
 #define MAX485_DE 3
 #define MAX485_RE_NEG 4 
-#define pingDelay 500              // PING DELAY FOR MODBUS AFTER EACH REQUEST
+#define pingDelay 100              // PING DELAY FOR MODBUS AFTER EACH REQUEST
 #define analogPingDelay 50         // DELAY BETWEEN ANALOG PINGS   
 #define lcdMenuScreens 3           // TOTAL LCD SCREENS
 #define maxPostTries 3             // MAX POST REQ TRIES
-#define minModbusPingDelay  50     // DELAY BETWEEN SUBSEQUENT MODBUS PINGS IN ms
+#define minModbusPingDelay  100     // DELAY BETWEEN SUBSEQUENT MODBUS PINGS IN ms
 
-#define requestInterval 60000   // DATA UPDATE TIME ON THE SERVER
+#define requestInterval 45000   // DATA UPDATE TIME ON THE SERVER
 #define lcdMenuInterval 5000       // INTERCAL FOR MENU ROTATION
 #define serialReadInterval 1000   // READ INTERVAL FROM UNO
-#define loopDelay 250            // MAIN LOOP DELAY
-#define watchDogInterval 15000000
+#define lcdUpdateInterval 2500        // LCD REFRESH RATE
+#define loopDelay 10            // MAIN LOOP DELAY
+#define watchDogInterval 15000000 //  15 SECS WATCHDOG TIMER
+#define initDealy 5000
+#define tempThreshold 0.5
+#define avgAnalogTime 10
 
 
 bool debugLogs = false;
@@ -66,24 +72,16 @@ String apn = "airtelgprs.com";
 String apn_u = "";                 
 String apn_p = "";             
 String url = "http://bio-digester-server.herokuapp.com/serial-data"; 
-// STRING CONTAINING TIME AND GPIO STATUS TO BE SENT TO TH SERVER
-String readData = "";
-// TIMER FOR MAKING POST REQUEST TO THE SERVER
-unsigned long timer = 0;
-// TIMER FOR MAKING NEW LOCATION REQUEST AND UPDATING LOCATON
-unsigned long locationTimer = 0;
-// USED TO STORE INCOMING BYTE, REPONSE TO AT COMMANDS FROM SIM800L
-int incomingByte = 0;
-// 200 HTTP CODE RECEIVED AFTER POST REQUEST
-bool isReqSuccess = false;
-// LOCATION REPOSNE STORED IN THIS AFTER AT+CNETSCAN
-String locationRes = "";
-// TIME FROM SIM800L STORED IN THIS
-String espTime = "";
-// USED TO TRIGGER LOCATION FROM SIM800, FOR THE VERY FIRST LOOP
-bool startupFlag = 0;
-// STORIG AND OBSERVING bearer response
-int bearerFlag = 1;
+
+String readData = ""; // STRING CONTAINING TIME AND GPIO STATUS TO BE SENT TO TH SERVER
+unsigned long timer = 0;  // TIMER FOR MAKING POST REQUEST TO THE SERVER
+unsigned long locationTimer = 0;  // TIMER FOR MAKING NEW LOCATION REQUEST AND UPDATING LOCATON
+int incomingByte = 0; // USED TO STORE INCOMING BYTE, REPONSE TO AT COMMANDS FROM SIM800L
+bool isReqSuccess = false;  // 200 HTTP CODE RECEIVED AFTER POST REQUEST
+String locationRes = "";  // LOCATION REPOSNE STORED IN THIS AFTER AT+CNETSCAN
+String espTime = "";  // TIME FROM SIM800L STORED IN THIS
+bool startupFlag = 0; // USED TO TRIGGER LOCATION FROM SIM800, FOR THE VERY FIRST LOOP
+int bearerFlag = 1; // STORIG AND OBSERVING bearer response
 String bearerResponse = "";
 
 #define WDT_TIMEOUT 180
@@ -99,6 +97,7 @@ String bearerResponse = "";
 float ph1, ph2, ph3, ph4, ph5;
 String ph1Str, ph2Str, ph3Str, ph4Str, ph5Str;
 float temp1, temp2, temp3, temp4, temp5, temp6;
+float temp1Prev, temp2Prev, temp3Prev, temp4Prev, temp5Prev;
 float rh;
 float voltage, energy, flowRate, flowVolume;
 float prevVoltage, prevEnergy, prevFlowRate, prevVolume;
@@ -106,7 +105,9 @@ float prevVoltage, prevEnergy, prevFlowRate, prevVolume;
 
 unsigned long menuTimer = 0;
 unsigned long serialReadTimer = 0;
+unsigned long lcdRefreshTimer = 0;
 int lcdMenuScreen = 0;
+
 
 bool newData = false;
 String mainString = "";
@@ -114,10 +115,19 @@ String phString = "";
 
 int reqFailCount = 0;
 
+float calibArr[5] = {
+  -16.55,
+  -17.45,
+  -13.88,
+  -17.07,
+  -16.55
+};
+
+
 void setup() {
-  delay(1000);
+  delay(initDealy);
   Init_Modbus1();
-  LCD_Init();
+  
   GPIO_Init();
   dht.begin(); 
   
@@ -126,7 +136,7 @@ void setup() {
   GSM_Serial.begin(9600);
   Serial_Uno.begin(9600);
 
-
+  LCD_Init();
   lcd.clear();
   lcd.setCursor(0, 0); lcd.print("Configuring GPRS..."); 
   // INIT GPRS
@@ -134,14 +144,22 @@ void setup() {
 
   timer = millis();
   menuTimer = timer;
-  serialReadTimer = menuTimer;
+  serialReadTimer = timer;
+  lcdRefreshTimer = timer;
 
   IWatchdog.begin(watchDogInterval);
+
+  temp1Prev = getTemp(analogRead(tempPin1), tempPin1);  
+  temp2Prev = getTemp(analogRead(tempPin2), tempPin2);  
+  temp3Prev = getTemp(analogRead(tempPin3), tempPin3);  
+  temp4Prev = getTemp(analogRead(tempPin4), tempPin4);  
+  temp5Prev = getTemp(analogRead(tempPin5), tempPin5);   
 }
 
 void loop() {
   Serial.println("\n\nLoop start --------------------------------");
   unsigned long tt = millis();
+  
   
   // IF POST REQ FAILED 3 TIMES, DONT RESET WATCHDOG TIMER
   if(reqFailCount >= maxPostTries) {
@@ -156,8 +174,7 @@ void loop() {
 
   updateModbusData();
   get_all_temp();
-//  get_all_ph();
-//  get_humidity();
+  get_humidity();
 
   // FROM UNO
   if(millis() - serialReadTimer > serialReadInterval) {
@@ -167,7 +184,7 @@ void loop() {
 
   // MAKING A POST REQUEST TO THE SERVER
   if(millis() - timer > requestInterval ) {
-    String processedData = formatString(deviceId, "5-11-22", "13:00:00", temp1, temp2, temp3, temp4, temp5, temp6, ph1Str, ph2Str, ph3Str, ph4Str, ph5Str, rh, voltage, flowRate, flowVolume);
+    String processedData = formatString(deviceId, "5-11-22", "13:00:00", temp1, temp2, temp3, temp4, temp5, temp6, ph1Str, ph2Str, ph3Str, ph4Str, ph5Str, rh, energy, flowRate, flowVolume);
     Serial_Mon.print("Processed data : ");
     Serial_Mon.println(processedData);
     gsm_http_post(processedData);
@@ -179,11 +196,18 @@ void loop() {
     lcdMenuScreen += 1;
     if(lcdMenuScreen >= lcdMenuScreens) lcdMenuScreen = 0;
 
+    draw_menu(lcdMenuScreen);
+
     menuTimer = millis();
   }
 
-  // DRAW MENU ON LCD EVERY LOOP
-  draw_menu(lcdMenuScreen);
+//  if(millis() - lcdRefreshTimer > lcdUpdateInterval) {
+//    // DRAW MENU ON LCD EVERY LOOP
+//    draw_menu(lcdMenuScreen);
+//
+//    lcdRefreshTimer = millis();
+//  }
+  
   // MIN LOOP DELAY
   delay(loopDelay);
   // RELOAD WATCHDOG TIMER
@@ -482,16 +506,17 @@ void draw_temp(float temp1, float temp2, float temp3, float temp4, float temp5, 
   lcd.setCursor(0, 1); lcd.print("T2: "); lcd.print(temp2);
   lcd.setCursor(0, 2); lcd.print("T3: "); lcd.print(temp3);
   lcd.setCursor(0, 3); lcd.print("T4: "); lcd.print(temp4);
-  lcd.setCursor(13, 0); lcd.print("T5: "); lcd.setCursor(12, 1);  lcd.print(temp5);
-  lcd.setCursor(13, 2); lcd.print("T6: "); lcd.setCursor(12, 3);  lcd.print(temp6);
+  lcd.setCursor(12, 0); lcd.print("T5: "); lcd.setCursor(12, 1);  lcd.print(temp5);
+  lcd.setCursor(12, 2); lcd.print("T6: "); lcd.setCursor(12, 3);  lcd.print(temp6);
 }
 void draw_modbus_data(float energy, float flowRate, float flowVolume, int rh) {
   lcd.clear();
   
-  lcd.setCursor(0, 0); lcd.print("Energy(kwh): "); lcd.print(voltage);
-  lcd.setCursor(0, 1); lcd.print("LPM:         "); lcd.print(flowRate);
-  lcd.setCursor(0, 2); lcd.print("Vol: "); lcd.print(String(flowVolume, 3));
-  lcd.setCursor(0, 3); lcd.print("RH % :       "); lcd.print(rh);
+  lcd.setCursor(0, 0); lcd.print("Kwh : "); lcd.print(energy);
+  lcd.setCursor(0, 1); lcd.print("LPM : "); lcd.print(flowRate);
+  lcd.setCursor(0, 2); lcd.print("RH %: "); lcd.print(rh);
+  lcd.setCursor(0, 3); lcd.print("Vol : "); lcd.print(String(flowVolume, 3));
+  
 }
 void draw_demo_screen(void) {
   // LCD PRINTS
@@ -613,12 +638,51 @@ void get_all_ph(void) {
   return;
 }
 void get_all_temp(void) {
-  temp1 = getTemp(analogRead(tempPin1));  
-  temp2 = getTemp(analogRead(tempPin2));  
-  temp3 = getTemp(analogRead(tempPin3));  
-  temp4 = getTemp(analogRead(tempPin4));  
-  temp5 = getTemp(analogRead(tempPin5));   
-  temp6 = getTemp(analogRead(tempPin5));
+  float temp1Inst = getTemp(getAvg((tempPin1)), tempPin1 );  
+  float temp2Inst = getTemp(getAvg((tempPin2)), tempPin2);  
+  float temp3Inst = getTemp(getAvg((tempPin3)), tempPin3);  
+  float temp4Inst = getTemp(getAvg((tempPin4)), tempPin4);  
+  float temp5Inst = getTemp(getAvg((tempPin5)), tempPin5);   
+
+//  float temp1Inst = getTemp((analogRead(tempPin1)));  
+//  float temp2Inst = getTemp((analogRead(tempPin2)));  
+//  float temp3Inst = getTemp((analogRead(tempPin3)));  
+//  float temp4Inst = getTemp((analogRead(tempPin4)));  
+//  float temp5Inst = getTemp((analogRead(tempPin5)));   
+  
+  if(1) {
+    if(abs(temp1Inst - temp1Prev) > tempThreshold) temp1Prev = temp1Inst;
+    temp1 = temp1Inst * 0.005 + temp1Prev * 0.995;
+    temp1Prev = temp1;
+
+    if(abs(temp2Inst - temp2Prev) > tempThreshold) temp2Prev = temp2Inst;
+    temp2 = temp2Inst * 0.005 + temp2Prev * 0.995;
+    temp2Prev = temp2;
+
+    if(abs(temp3Inst - temp3Prev) > tempThreshold) temp3Prev = temp3Inst;
+    temp3 = temp3Inst * 0.005 + temp3Prev * 0.995;
+    temp3Prev = temp3;
+
+    if(abs(temp4Inst - temp4Prev) > tempThreshold) temp4Prev = temp4Inst;
+    temp4 = temp4Inst * 0.005 + temp4Prev * 0.995;
+    temp4Prev = temp4;
+
+    if(abs(temp5Inst - temp5Prev) > tempThreshold) temp5Prev = temp5Inst;
+    temp5 = temp5Inst * 0.005 + temp5Prev * 0.995;
+    temp5Prev = temp5;
+  }
+
+//  Serial.print("temps = ");
+//  Serial.print(temp1);
+//  Serial.print(",");
+//  Serial.print(temp2);
+//  Serial.print(",");
+//  Serial.print(temp3);
+//  Serial.print(",");
+//  Serial.print(temp4);
+//  Serial.print(",");
+//  Serial.println(temp5);
+  
   return;
 }
 float getPh(int analogPin) {     // GET SINGLE PH
@@ -652,8 +716,8 @@ float getPh(int analogPin) {     // GET SINGLE PH
   
   return ph_act;
 }
-float getTemp(int val){ // SINGLE GET  SINGLE TEMPRATURE
-  float voltageDividerR1 = 255;         // Resistor value in R1 for voltage devider method 
+float getTemp(int val, int analogPin){ // SINGLE GET  SINGLE TEMPRATURE
+  float voltageDividerR1 = 215;         // Resistor value in R1 for voltage devider method 
   float BValue = 4000;                    // The B Value of the thermistor for the temperature measuring range
   float R1 = 10000;                        // Thermistor resistor rating at based temperature (25 degree celcius)
   float T1 = 298.15f;                      /* Base temperature T1 in Kelvin (default should be at 25 degree)*/
@@ -673,8 +737,39 @@ float getTemp(int val){ // SINGLE GET  SINGLE TEMPRATURE
   d = c / BValue ;                                                           
   T2 = 1 / (a- d);    
   T2 = T2 - 273.15;
+
+  T2 += calibArr[analogPin];
   
   return T2;
+}
+int getAvg(int analogPin) {
+  // TAKE 10 SAMPLES
+  for(int i=0;i<10;i++) 
+  { 
+    buffer_arr[i]=analogRead(analogPin);
+    delay(avgAnalogTime);
+  }
+  // SORT SAMPLES IN ASCENDING ORDER
+  for(int i=0;i<9;i++)
+  {
+    for(int j=i+1;j<10;j++)
+    {
+      if(buffer_arr[i]>buffer_arr[j])
+      {
+        temp=buffer_arr[i];
+        buffer_arr[i]=buffer_arr[j];
+        buffer_arr[j]=temp;
+      }
+    }
+  }  
+  // TAKE AVERAGE OF 6 MIDDLE SAMPLES
+  avgval=0;
+  for(int i=2;i<8;i++)
+    avgval+=buffer_arr[i];
+    
+  avgval = avgval/6;  
+
+  return avgval;  
 }
 /* TEMP / PH FUNCTIONS */
 
@@ -682,6 +777,9 @@ float getTemp(int val){ // SINGLE GET  SINGLE TEMPRATURE
 /* GSM FUNCTIONS */
 // POST REQUEST
 void gsm_http_post( String postdata) {
+  // LED ON, INDICATING POST REQ HAS STARTED
+  digitalWrite(LED1, HIGH);
+  
   Serial_Mon.println(" --- Start GPRS & HTTP --- ");
   // gsm_send_serial("AT+SAPBR=1,1");
   // gsm_send_serial("AT+SAPBR=2,1");
@@ -740,14 +838,17 @@ void gsm_config_gprs() {
     if(bearerResponse.indexOf("OK") == -1 || bearerResponse.length()<2) {
       bearerFlag = 1;
       Serial_Mon.println("Bearer Connection Failed !");
-      ledSignal(5);
+      ledSignal(15);
     }
     // BEARER OK
     else if(bearerResponse.indexOf("OK") != -1) {
       bearerFlag = 0;
       Serial_Mon.println("Bearer Connection Sucessful !");
+      ledSignal(5);
     }
   }    
+
+  digitalWrite(LED1, HIGH);
 
   gsm_send_serial("AT+SAPBR=2,1");
   delay(GPRS_INIT_DELAY);
@@ -758,8 +859,9 @@ void gsm_config_gprs() {
   gsm_send_serial("AT+HTTPPARA=URL," + url);
 
   // INDICATIING GSM INITIALIZATION HAS COMPLETED SUCCESFULLY  
-  digitalWrite(LED1, HIGH);
+  digitalWrite(LED1, LOW);
 }
+
 // SEND AT COMMANDS GSM
 // HANDLES DIFFERENT WAITING TIMES FOR VARIOUS AT COMMANDS
 void gsm_send_serial(String command) {
@@ -771,8 +873,10 @@ void gsm_send_serial(String command) {
   int waitTime = defaultWaitTimeGSM;
   String httpRes = "";
   
-  // WAIT 5 SECS IF COMMAND IS EITHER POST REQUEST OR GARBAGE
-  if(command == "AT+HTTPACTION=1" || command[0] == '{') waitTime = 5000;
+  // RESPONSE 200 IS RECEIVED IN THIS REQUEST
+  if(command == "AT+HTTPACTION=1") waitTime = 15000;
+  // ACTUAL JSON DATA
+  else if(command[0] == '{') waitTime = 5000;
   // WAIT 30 SECS IF COMMAND IS INITIALIZE BEARING
   else if(command == "AT+SAPBR=1,1") waitTime = 30000;
   // WAIT 20 SECS IF COMMAND IS GPS SCAN
@@ -795,9 +899,13 @@ void gsm_send_serial(String command) {
       // UPDATE BEARER REPONSE IN STRING
       else if(command == "AT+SAPBR=1,1") bearerResponse += String((char)incomingB);
     }
-    // IF BEARER CONNECTON SUCCESSFUL BEFORE 0 SECS, BREAK
+    // IF BEARER CONNECTON SUCCESSFUL BEFORE 30 SECS, BREAK
     if(command == "AT+SAPBR=1,1") {
       if(bearerResponse.indexOf("OK") != -1 && bearerResponse.length()>2) break;
+    }
+    // IF POST REQUEST COMPLETE BEFORE 15 SECS, BREAK
+    else if(command == "AT+HTTPACTION=1") {
+      if(httpRes.indexOf("200") > 0) break;
     }
   }  
   Serial_Mon.println();
