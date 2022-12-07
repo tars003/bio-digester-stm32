@@ -43,7 +43,7 @@ DHT dht(DHTPIN, DHTTYPE);
 #define maxPostTries 3             // MAX POST REQ TRIES
 #define minModbusPingDelay  100     // DELAY BETWEEN SUBSEQUENT MODBUS PINGS IN ms
 
-#define requestInterval 45000   // DATA UPDATE TIME ON THE SERVER
+#define requestInterval 15000   // DATA UPDATE TIME ON THE SERVER
 #define lcdMenuInterval 5000       // INTERCAL FOR MENU ROTATION
 #define serialReadInterval 1000   // READ INTERVAL FROM UNO
 #define lcdUpdateInterval 2500        // LCD REFRESH RATE
@@ -71,7 +71,10 @@ int buffer_arr[10],temp;
 String apn = "airtelgprs.com";           
 String apn_u = "";                 
 String apn_p = "";             
-String url = "http://bio-digester-server.herokuapp.com/serial-data"; 
+// String url = "http://bio-digester-server.herokuapp.com/serial-data"; 
+//String url = "https://bio-digester-monitor.onrender.com/serial-data";
+
+String url = "http://ec2-3-109-201-138.ap-south-1.compute.amazonaws.com/serial-data"; 
 
 String readData = ""; // STRING CONTAINING TIME AND GPIO STATUS TO BE SENT TO TH SERVER
 unsigned long timer = 0;  // TIMER FOR MAKING POST REQUEST TO THE SERVER
@@ -117,8 +120,8 @@ int reqFailCount = 0;
 
 float calibArr[5] = {
   -16.55,
-  -17.45,
-  -13.88,
+  -15.05,
+  -15.78,
   -17.07,
   -16.55
 };
@@ -788,7 +791,7 @@ void gsm_http_post( String postdata) {
   // gsm_send_serial("AT+HTTPPARA=URL," + url);
   gsm_send_serial("AT+HTTPPARA=CONTENT,application/json");
   
-  gsm_send_serial("AT+HTTPDATA=1200,5000");
+  gsm_send_serial("AT+HTTPDATA=500,5000");
   gsm_send_serial(postdata);
   gsm_send_serial("AT+HTTPACTION=1");
   gsm_send_serial("AT+HTTPREAD"); 
