@@ -4,16 +4,21 @@
 #include <ModbusMaster.h>
 #include <LiquidCrystal_I2C.h>
 #include <Wire.h>
-
+#include <OneWire.h>
+#include <DallasTemperature.h>
 
 HardwareSerial GSM_Serial(PA12, PA11);
 HardwareSerial Serial1(PA10, PA9);
 SoftwareSerial Serial_Uno(10, 11);
 #define Serial_Mon Serial
 
+#define ONE_WIRE_BUS A4
+
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 ModbusMaster node;
 ModbusMaster node2;
+OneWire oneWire(ONE_WIRE_BUS);  
+DallasTemperature sensors(&oneWire);
 
 #define DHTTYPE DHT11
 #define DHTPIN D7
@@ -31,7 +36,7 @@ DHT dht(DHTPIN, DHTTYPE);
 
 #define maxSerialLen 33
 #define minSerialLen 27
-#define deviceId 1
+#define deviceId 3
 
  
 /* MODBUS 1 - ENEGY METER  */
@@ -43,17 +48,17 @@ DHT dht(DHTPIN, DHTTYPE);
 #define maxPostTries 3             // MAX POST REQ TRIES
 #define minModbusPingDelay  100     // DELAY BETWEEN SUBSEQUENT MODBUS PINGS IN ms
 
-#define requestInterval 15000   // DATA UPDATE TIME ON THE SERVER
+#define requestInterval 15 * 1000   // DATA UPDATE TIME ON THE SERVER
 #define lcdMenuInterval 5000       // INTERCAL FOR MENU ROTATION
-#define serialReadInterval 1000   // READ INTERVAL FROM UNO
+#define serialReadInterval 2000   // READ INTERVAL FROM UNO
 #define lcdUpdateInterval 2500        // LCD REFRESH RATE
 #define loopDelay 10            // MAIN LOOP DELAY
-#define watchDogInterval 30000000 //  15 SECS WATCHDOG TIMER
+#define watchDogInterval 15 * 1000000 //  15 SECS WATCHDOG TIMER
 #define initDealy 5000
 #define tempThreshold 0.5
 #define avgAnalogTime 10
 #define lcdInfoDelay 2000
-
+#define POST_REQ_TIME  1000 * 15
 
 bool debugLogs = false;
 
@@ -88,7 +93,6 @@ bool startupFlag = 0; // USED TO TRIGGER LOCATION FROM SIM800, FOR THE VERY FIRS
 int bearerFlag = 1; // STORIG AND OBSERVING bearer response
 String bearerResponse = "";
 
-#define WDT_TIMEOUT 180
 #define defaultWaitTimeGSM 1000
 #define locationInterval 240000
 #define updateInterval 500
@@ -105,6 +109,8 @@ float temp1Prev, temp2Prev, temp3Prev, temp4Prev, temp5Prev;
 float rh;
 float voltage, energy, flowRate, flowVolume;
 float prevVoltage, prevEnergy, prevFlowRate, prevVolume;
+
+int deviceCount = 0;
 /* GLOBAL VARS */
 
 unsigned long menuTimer = 0;
@@ -119,6 +125,7 @@ String phString = "";
 
 int reqFailCount = 0;
 
+
 float calibArr[5] = {
   -16.55,
   -15.05,
@@ -128,17 +135,30 @@ float calibArr[5] = {
 };
 
 
+uint8_t sensor1[8] = {0x28, 0xB0, 0x82, 0xB8, 0x58, 0x20, 0x01, 0x1D };
+uint8_t sensor2[8] = {0x28, 0x1C, 0x64, 0x07, 0xD6, 0x01, 0x3C, 0xA1};
+uint8_t sensor3[8] = {0x28, 0x3C, 0xB2, 0x07, 0xD6, 0x01, 0x3C, 0xD5 };
+uint8_t sensor4[8] = {0x28, 0x7A, 0xCF, 0x75, 0xD0, 0x01, 0x3C, 0xED};
+uint8_t sensor5[8] = {0x28, 0xFA, 0x95, 0x07, 0xD6, 0x01, 0x3C, 0x51 };
+
+
+
 void setup() {
   delay(initDealy);
   Init_Modbus1();
   
   GPIO_Init();
   dht.begin(); 
+
+  sensors.begin();
   
   Serial_Mon.begin(9600);
   Serial1.begin(9600);
   GSM_Serial.begin(9600);
   Serial_Uno.begin(9600);
+
+  IWatchdog.begin(watchDogInterval);
+
 
   LCD_Init();
   lcd.clear();
@@ -154,13 +174,12 @@ void setup() {
   serialReadTimer = timer;
   lcdRefreshTimer = timer;
 
-  IWatchdog.begin(watchDogInterval);
-
-  temp1Prev = getTemp(analogRead(tempPin1), tempPin1);  
-  temp2Prev = getTemp(analogRead(tempPin2), tempPin2);  
-  temp3Prev = getTemp(analogRead(tempPin3), tempPin3);  
-  temp4Prev = getTemp(analogRead(tempPin4), tempPin4);  
-  temp5Prev = getTemp(analogRead(tempPin5), tempPin5);   
+  
+//  temp1Prev = getTemp(analogRead(tempPin1), tempPin1);  
+//  temp2Prev = getTemp(analogRead(tempPin2), tempPin2);  
+//  temp3Prev = getTemp(analogRead(tempPin3), tempPin3);  
+//  temp4Prev = getTemp(analogRead(tempPin4), tempPin4);  
+//  temp5Prev = getTemp(analogRead(tempPin5), tempPin5);   
 }
 
 void loop() {
@@ -174,9 +193,10 @@ void loop() {
     Serial.println(reqFailCount);
     Serial.println();
     lcd.clear();
-    lcd.setCursor(0, 0); lcd.print("Network Error : 101"); 
-    lcd.setCursor(0, 1); lcd.print("Unit restart "); 
-    lcd.setCursor(0, 2); lcd.print("in 60 sec.");
+    lcd.setCursor(0, 0); lcd.print("Network Error : 101 ");
+    lcd.setCursor(0, 1); lcd.print("               "); 
+    lcd.setCursor(0, 2); lcd.print("Unit restart "); 
+    lcd.setCursor(0, 3); lcd.print("in 60 sec.");
     while(1){
       delay(1000);
       Serial.println("Waiting for restart");
@@ -185,13 +205,13 @@ void loop() {
   }
 
   updateModbusData();
-  get_all_temp();
-  get_humidity();
+  get_all_temp_ds();
+//  get_humidity();
 
   // FROM UNO
   if(millis() - serialReadTimer > serialReadInterval) {
     recvData();
-    serialReadTimer = 0;
+    serialReadTimer = millis();
   }
 
   // MAKING A POST REQUEST TO THE SERVER
@@ -519,7 +539,7 @@ void draw_temp(float temp1, float temp2, float temp3, float temp4, float temp5, 
   lcd.setCursor(0, 2); lcd.print("T3: "); lcd.print(temp3);
   lcd.setCursor(0, 3); lcd.print("T4: "); lcd.print(temp4);
   lcd.setCursor(12, 0); lcd.print("T5: "); lcd.setCursor(12, 1);  lcd.print(temp5);
-  lcd.setCursor(12, 2); lcd.print("T6: "); lcd.setCursor(12, 3);  lcd.print(temp6);
+  lcd.setCursor(12, 2); lcd.print("AMB.:"); lcd.setCursor(12, 3);  lcd.print(temp6);
 }
 void draw_modbus_data(float energy, float flowRate, float flowVolume, int rh) {
   lcd.clear();
@@ -624,6 +644,21 @@ float get_flow_volume(void) {
 /* MODBUS FUNCTIONS */
 
 /* TEMP / PH FUNCTIONS */
+void get_all_temp_ds(void) {
+  sensors.requestTemperatures(); 
+
+  temp1 = sensors.getTempCByIndex(4);
+  delay(50);
+  temp2 = sensors.getTempCByIndex(0);
+  delay(50);
+  temp3 = sensors.getTempCByIndex(1);
+  delay(50);
+  temp4 = sensors.getTempCByIndex(2);
+  delay(50);
+  temp5 = sensors.getTempCByIndex(3);
+
+  return;
+}
 void get_humidity(void) {
   temp6 = dht.readTemperature();
   rh = dht.readHumidity();
@@ -864,8 +899,12 @@ void gsm_config_gprs() {
 
       lcd.clear();
       lcd.setCursor(0, 0); lcd.print("Reinsert the ");
-      lcd.setCursor(0, 0); lcd.print("SIM properly and ");
+      lcd.setCursor(0, 1); lcd.print("SIM properly and ");
       lcd.setCursor(0, 2); lcd.print("restart the UNIT");
+      while(1) {
+        delay(1000);
+        Serial.println("Waiting for restart");
+      }
     }
     // BEARER OK
     else if(bearerResponse.indexOf("OK") != -1) {
@@ -901,7 +940,7 @@ void gsm_send_serial(String command) {
   String httpRes = "";
   
   // RESPONSE 200 IS RECEIVED IN THIS REQUEST
-  if(command == "AT+HTTPACTION=1") waitTime = 15000;
+  if(command == "AT+HTTPACTION=1") waitTime = POST_REQ_TIME;
   // ACTUAL JSON DATA
   else if(command[0] == '{') waitTime = 5000;
   // WAIT 30 SECS IF COMMAND IS INITIALIZE BEARING
@@ -914,6 +953,8 @@ void gsm_send_serial(String command) {
   // WAIT FOR RESPONSE FROM SIM800L
   while (wtimer + waitTime > millis()) {
     while (GSM_Serial.available()) {
+      IWatchdog.reload();
+      
       int incomingB ;      
       incomingB = GSM_Serial.read();
       Serial_Mon.write((char)incomingB);
@@ -926,6 +967,7 @@ void gsm_send_serial(String command) {
       // UPDATE BEARER REPONSE IN STRING
       else if(command == "AT+SAPBR=1,1") bearerResponse += String((char)incomingB);
     }
+    IWatchdog.reload();
     // IF BEARER CONNECTON SUCCESSFUL BEFORE 30 SECS, BREAK
     if(command == "AT+SAPBR=1,1") {
       if(bearerResponse.indexOf("OK") != -1 && bearerResponse.length()>2) break;
@@ -984,7 +1026,9 @@ void recvData() {
   char endMarker = '>';
   char rc;
 
-//  Serial_Mon.println("Inside recvData");
+  Serial_Mon.println("\n Inside recvData");
+
+  while(Serial_Uno.available() == 0);
 
   while(Serial_Uno.available() > 0 && newData == false) {
     rc = Serial_Uno.read();

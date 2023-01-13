@@ -6,18 +6,18 @@
 #define phPin4 3
 #define phPin5 4
 
-#define loopInterval 1250
-#define resetInterval 600000
+#define loopInterval 500
+#define resetInterval 1000 * 180
 
 #define phThreshold 0.5
 #define avgAnalogTime 15
 
 float calibArr[5] = {
-  27.32,
-  27.20,
-  26.47,
-  27.24,
-  27.23
+  22.03,
+  21.36,
+  21.70,
+  21.80,
+  22.60
 };
 
 float calibration_value = 28.44;
@@ -37,10 +37,7 @@ unsigned long testTimer = 0;
 void setup() {
   Serial.begin(9600);
   delay(2000);
-  Serial.println("Inside setup !!");
-
-  wdt_disable();  
-  delay(3000); 
+  // Serial.println("Inside setup !!");
 
   loopTimer = millis();
   resetTimer = millis();
@@ -89,6 +86,13 @@ void loop() {
     ph5 = insPh5 * 0.010 + prevPh5 * 0.990;
     prevPh5 = ph5;
   }  
+  else {
+    ph1 = insPh1;
+    ph2 = insPh2;
+    ph3 = insPh3;
+    ph4 = insPh4;
+    ph5 = insPh5;
+  }
   
   // SEND SERIAL DATA
   if(millis() - loopTimer > loopInterval) {
@@ -126,7 +130,6 @@ float getPh(int analogPin) {     // GET SINGLE PH
 
   // testTimer = millis();
   avgval = getAvg(analogPin);
-  // avgval = smooth(analogPin);
   // Serial.print("Time taken by avg method : ");
   // Serial.println(millis() - testTimer);
     
@@ -146,7 +149,7 @@ int getAvg(int analogPin) {
   for(int i=0;i<10;i++) 
   { 
     buffer_arr[i]=analogRead(analogPin);
-    delay(15);
+    delay(30);
   }
   // SORT SAMPLES IN ASCENDING ORDER
   for(int i=0;i<9;i++)
@@ -169,37 +172,6 @@ int getAvg(int analogPin) {
   avgval = avgval/6;  
 
   return avgval;  
-}
-
-int smooth(int analogPin){
-  int i;
-  int value = 0;
-  int numReadings = 30;
-
-  for (i = 0; i < numReadings; i++){
-    // Read light sensor data.
-    value = value + analogRead(analogPin);
-
-    // 1ms pause adds more stability between reads.
-    delay(5);
-  }
-
-  // Take an average of all the readings.
-  value = value / numReadings;
-
-  // Scale to 8 bits (0 - 255).
-  // value = value / 4;
-
-  return value;
-}
-
-float formatPh(float ph) {
-  long val;   // ph = 123.456
-
-  val = (long) (ph * 10L); // val = 1234
-  ph= (float) val / 10.0; // x = 1234 / 10.0 = 123.4
-
-  return ph;
 }
 
 // <11.20,11.10,11.10,11.20,13.00,>
