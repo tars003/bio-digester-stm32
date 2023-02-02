@@ -29,6 +29,14 @@ void setup(void)
 
 void loop(void)
 { 
+
+  // locate devices on the bus
+  Serial.print("Locating devices...");
+  Serial.print("Found ");
+  deviceCount = sensors.getDeviceCount();
+  Serial.print(deviceCount, DEC);
+  Serial.println(" devices.");
+  Serial.println("");
   
   // Send command to all the sensors for temperature conversion
   sensors.requestTemperatures(); 
@@ -47,7 +55,7 @@ void loop(void)
     Serial.print((char)176);//shows degrees character
     Serial.println("F");
 
-//    delay(100);
+    delay(100);
   }
   
   Serial.println("");

@@ -11,54 +11,59 @@ HardwareSerial GSM_Serial(PA12, PA11);
 HardwareSerial Serial1(PA10, PA9);
 SoftwareSerial Serial_Uno(10, 11);
 #define Serial_Mon Serial
+#define DHTTYPE DHT11
 
 #define ONE_WIRE_BUS A4
-
-LiquidCrystal_I2C lcd(0x27, 20, 4);
-ModbusMaster node;
-ModbusMaster node2;
-OneWire oneWire(ONE_WIRE_BUS);  
-DallasTemperature sensors(&oneWire);
-
-#define DHTTYPE DHT11
 #define DHTPIN D7
-DHT dht(DHTPIN, DHTTYPE);
 
 #define phPin1 0
 #define LED1 D13
+#define GSM_RESET PC_4
+//#define GSM_RESET PB_13
 // HAS TO BE IN NUMERICAL FORMAT, CANNOT BE A0,A1,etc, USED FOR CALIBRATION ARR INDEXING
 #define tempPin1 0
 #define tempPin2 1
 #define tempPin3 2
 #define tempPin4 3
 #define tempPin5 4
+#define MAX485_DE 3
+#define MAX485_RE_NEG 4 
 
+LiquidCrystal_I2C lcd(0x27, 20, 4);
+ModbusMaster node;
+ModbusMaster node2;
+OneWire oneWire(ONE_WIRE_BUS);  
+DallasTemperature sensors(&oneWire);
+DHT dht(DHTPIN, DHTTYPE);
+
+
+#define deviceId 6
 
 #define maxSerialLen 33
 #define minSerialLen 27
-#define deviceId 3
 
- 
-/* MODBUS 1 - ENEGY METER  */
-#define MAX485_DE 3
-#define MAX485_RE_NEG 4 
 #define pingDelay 100              // PING DELAY FOR MODBUS AFTER EACH REQUEST
 #define analogPingDelay 50         // DELAY BETWEEN ANALOG PINGS   
 #define lcdMenuScreens 3           // TOTAL LCD SCREENS
 #define maxPostTries 3             // MAX POST REQ TRIES
 #define minModbusPingDelay  100     // DELAY BETWEEN SUBSEQUENT MODBUS PINGS IN ms
 
-#define requestInterval 15 * 1000   // DATA UPDATE TIME ON THE SERVER
+#define requestInterval 120 * 1000   // DATA UPDATE TIME ON THE SERVER
 #define lcdMenuInterval 5000       // INTERCAL FOR MENU ROTATION
 #define serialReadInterval 2000   // READ INTERVAL FROM UNO
 #define lcdUpdateInterval 2500        // LCD REFRESH RATE
 #define loopDelay 10            // MAIN LOOP DELAY
 #define watchDogInterval 15 * 1000000 //  15 SECS WATCHDOG TIMER
-#define initDealy 5000
 #define tempThreshold 0.5
 #define avgAnalogTime 10
 #define lcdInfoDelay 2000
-#define POST_REQ_TIME  1000 * 15
+
+
+#define defaultWaitTimeGSM 1000   // DEFAULT WAIT TIME BETWEEN GSM AT COMMANDS
+#define GPRS_INIT_DELAY 2500      // GPRS SPECIFIC INITIALIZATION WAIT TIME 
+#define gsm_init_delay 5000       // WAITS BEFORE GPRS CONFIGURATION
+#define initDealy 5000            // WAITS BEFORE ENTERING SETUP
+#define POST_REQ_TIME  1000 * 120  // WAIT FOR POST REQUEST RESPONSE TIME
 
 bool debugLogs = false;
 
@@ -80,7 +85,7 @@ String apn_p = "";
 
 // String url = "http://bio-digester-server.herokuapp.com/serial-data"; 
 //String url = "https://bio-digester-monitor.onrender.com/serial-data";
-String url = "http://13.234.255.254/serial-data"; 
+String url = "http://13.234.255.254/api/serial-data"; 
 
 String readData = ""; // STRING CONTAINING TIME AND GPIO STATUS TO BE SENT TO TH SERVER
 unsigned long timer = 0;  // TIMER FOR MAKING POST REQUEST TO THE SERVER
@@ -92,12 +97,6 @@ String espTime = "";  // TIME FROM SIM800L STORED IN THIS
 bool startupFlag = 0; // USED TO TRIGGER LOCATION FROM SIM800, FOR THE VERY FIRST LOOP
 int bearerFlag = 1; // STORIG AND OBSERVING bearer response
 String bearerResponse = "";
-
-#define defaultWaitTimeGSM 1000
-#define locationInterval 240000
-#define updateInterval 500
-#define GPRS_INIT_DELAY 2500
-#define gsm_init_delay 5000
 /* GPRS CONFIG */
 
 /* GLOBAL VARS */
@@ -175,11 +174,6 @@ void setup() {
   lcdRefreshTimer = timer;
 
   
-//  temp1Prev = getTemp(analogRead(tempPin1), tempPin1);  
-//  temp2Prev = getTemp(analogRead(tempPin2), tempPin2);  
-//  temp3Prev = getTemp(analogRead(tempPin3), tempPin3);  
-//  temp4Prev = getTemp(analogRead(tempPin4), tempPin4);  
-//  temp5Prev = getTemp(analogRead(tempPin5), tempPin5);   
 }
 
 void loop() {
@@ -206,7 +200,7 @@ void loop() {
 
   updateModbusData();
   get_all_temp_ds();
-//  get_humidity();
+  get_humidity();
 
   // FROM UNO
   if(millis() - serialReadTimer > serialReadInterval) {
@@ -732,6 +726,13 @@ void get_all_temp(void) {
   
   return;
 }
+void get_initial_temp(void) {  
+  temp1Prev = getTemp(analogRead(tempPin1), tempPin1);  
+  temp2Prev = getTemp(analogRead(tempPin2), tempPin2);  
+  temp3Prev = getTemp(analogRead(tempPin3), tempPin3);  
+  temp4Prev = getTemp(analogRead(tempPin4), tempPin4);  
+  temp5Prev = getTemp(analogRead(tempPin5), tempPin5);   
+}
 float getPh(int analogPin) {     // GET SINGLE PH
   // TAKE 10 SAMPLES
   for(int i=0;i<10;i++) 
@@ -876,6 +877,10 @@ void gsm_config_gprs() {
   // INDICATION GSM INITIALIZATION START
   digitalWrite(LED1, HIGH);
 
+  delay(gsm_init_delay);
+  gsm_send_serial("AT+CFUN=0");
+  delay(gsm_init_delay);
+  gsm_send_serial("AT+CFUN=1");
   delay(gsm_init_delay);
 
   while(bearerFlag) {

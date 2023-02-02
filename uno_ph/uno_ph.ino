@@ -9,15 +9,16 @@
 #define loopInterval 500
 #define resetInterval 1000 * 180
 
-#define phThreshold 0.5
+#define phThreshold 2.25
 #define avgAnalogTime 15
+float  responseTime = 990;
 
 float calibArr[5] = {
-  22.03,
-  21.36,
-  21.70,
-  21.80,
-  22.60
+  21.15,
+  21.05  ,
+  21.00,
+  21.35  ,
+  21.80  
 };
 
 float calibration_value = 28.44;
@@ -34,6 +35,8 @@ unsigned long resetTimer = 0;
 unsigned long testTimer = 0;
 
 
+
+
 void setup() {
   Serial.begin(9600);
   delay(2000);
@@ -42,9 +45,6 @@ void setup() {
   loopTimer = millis();
   resetTimer = millis();
   
-
-  
-
   prevPh1 = getPh(phPin1);
   prevPh2 = getPh(phPin2);
   prevPh3 = getPh(phPin3);
@@ -67,23 +67,23 @@ void loop() {
   // PREV VALUE FILTER
   if(1) {
     if(abs(insPh1 - prevPh1) > phThreshold) prevPh1 = insPh1;
-    ph1 = insPh1 * 0.010 + prevPh1 * 0.990;
+    ph1 = insPh1 * float((1000-responseTime)/1000) + prevPh1 * float(responseTime/1000);
     prevPh1 = ph1;
 
     if(abs(insPh2 - prevPh2) > phThreshold) prevPh2 = insPh2;
-    ph2 = insPh2 * 0.010 + prevPh2 * 0.990;
+    ph2 = insPh2 * float((1000-responseTime)/1000) + prevPh2 * float(responseTime/1000);
     prevPh2 = ph2;
 
     if(abs(insPh3 - prevPh3) > phThreshold) prevPh3 = insPh3;
-    ph3 = insPh3 * 0.010 + prevPh3 * 0.990;
+    ph3 = insPh3 * float((1000-responseTime)/1000) + prevPh3 * float(responseTime/1000);
     prevPh3 = ph3;
 
     if(abs(insPh4 - prevPh4) > phThreshold) prevPh4 = insPh4;
-    ph4 = insPh4 * 0.010 + prevPh4 * 0.990;
+    ph4 = insPh4 * float((1000-responseTime)/1000) + prevPh4 * float(responseTime/1000);
     prevPh4 = ph4;
 
     if(abs(insPh5 - prevPh5) > phThreshold) prevPh5 = insPh5;
-    ph5 = insPh5 * 0.010 + prevPh5 * 0.990;
+    ph5 = insPh5 * float((1000-responseTime)/1000) + prevPh5 * float(responseTime/1000);
     prevPh5 = ph5;
   }  
   else {
